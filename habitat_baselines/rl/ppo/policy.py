@@ -14,6 +14,10 @@ from habitat_baselines.rl.models.projection import Projection, RotateTensor, get
 from habitat_baselines.rl.models.rnn_state_encoder import RNNStateEncoder
 from habitat_baselines.rl.models.simple_cnn import RGBCNNNonOracle, RGBCNNOracle, MapCNN
 from habitat_baselines.rl.models.projection import Projection
+from habitat_baselines.rl.models.geometry import OccupancyMap
+from habitat_baselines.rl.models.perception import PerceptionCNN
+from encoding_layer.model import Encoder
+# from skimage.measure import label
 
 class PolicyNonOracle(nn.Module):
     def __init__(self, net, dim_actions):
@@ -134,6 +138,66 @@ class PolicyOracle(nn.Module):
         return value, action_log_probs, distribution_entropy, rnn_hidden_states
 
 
+class PolicyExploration(nn.Module):
+    def __init__(self, net, dim_actions):
+        super().__init__()
+        self.net = net
+        self.dim_actions = dim_actions
+
+        self.action_distribution = CategoricalNet(
+            self.net.output_size, self.dim_actions
+        )
+        self.critic = CriticHead(self.net.output_size)
+
+    def forward(self, *x):
+        raise NotImplementedError
+
+    def act(
+        self,
+        observations,
+        rnn_hidden_states,
+        global_map,
+        prev_actions,
+        masks,
+        deterministic=False,
+    ):
+        features, rnn_hidden_states, var_log = self.net(
+            observations, rnn_hidden_states, global_map, prev_actions, masks
+        )
+
+        distribution = self.action_distribution(features)
+        value = self.critic(features)
+
+        if deterministic:
+            action = distribution.mode()
+        else:
+            action = distribution.sample()
+
+        action_log_probs = distribution.log_probs(action)
+        map_reward_entropy = 0.5 * torch.sum(var_log, dim=-1, keepdim=True)
+        
+        return value, action, action_log_probs, rnn_hidden_states, map_reward_entropy
+
+    def get_value(self, observations, rnn_hidden_states, global_map, prev_actions, masks):
+        features, _, _ = self.net(
+            observations, rnn_hidden_states, global_map, prev_actions, masks
+        )
+        return self.critic(features)
+
+    def evaluate_actions(
+        self, observations, rnn_hidden_states, global_map, prev_actions, masks, action
+    ):
+        features, rnn_hidden_states, _ = self.net(
+            observations, rnn_hidden_states, global_map, prev_actions, masks
+        )
+        distribution = self.action_distribution(features)
+        value = self.critic(features)
+
+        action_log_probs = distribution.log_probs(action)
+        distribution_entropy = distribution.entropy().mean()
+
+        return value, action_log_probs, distribution_entropy, rnn_hidden_states
+
 
 class CriticHead(nn.Module):
     def __init__(self, input_size):
@@ -144,8 +208,6 @@ class CriticHead(nn.Module):
 
     def forward(self, x):
         return self.fc(x)
-
-
 
 
 
@@ -210,6 +272,41 @@ class BaselinePolicyOracle(PolicyOracle):
                 object_category_embedding_size=object_category_embedding_size,
                 previous_action_embedding_size=previous_action_embedding_size,
                 use_previous_action=use_previous_action,
+            ),
+            action_space.n,
+        )
+
+class BaselinePolicyExploration(PolicyExploration):
+    def __init__(
+        self,
+        batch_size,
+        observation_space,
+        action_space,
+        goal_sensor_uuid,
+        device,
+        object_category_embedding_size,
+        previous_action_embedding_size,
+        egocentric_map_size,
+        global_map_size,
+        coordinate_min,
+        coordinate_max,
+        encoder,
+        hidden_size=512,
+    ):
+        super().__init__(
+            ExplorationNetwork(
+                batch_size,
+                observation_space=observation_space,
+                hidden_size=hidden_size,
+                goal_sensor_uuid=goal_sensor_uuid,
+                device=device,
+                object_category_embedding_size=object_category_embedding_size,
+                previous_action_embedding_size=previous_action_embedding_size,
+                egocentric_map_size=egocentric_map_size,
+                global_map_size=global_map_size,
+                coordinate_min=coordinate_min,
+                coordinate_max=coordinate_max,
+                encoder=encoder
             ),
             action_space.n,
         )
@@ -326,7 +423,7 @@ class BaselineNetNonOracle(Net):
             if bs != 18:
                 self.full_global_map[bs:, :, :, :] = self.full_global_map[bs:, :, :, :] * 0
             if torch.cuda.is_available():
-                with torch.cuda.device(1):
+                with torch.cuda.device(0):
                     agent_view = torch.cuda.FloatTensor(bs, self.global_map_depth, self.global_map_size, self.global_map_size).fill_(0)
             else:
                 agent_view = torch.FloatTensor(bs, self.global_map_depth, self.global_map_size, self.global_map_size).to(self.device).fill_(0)
@@ -370,7 +467,7 @@ class BaselineNetNonOracle(Net):
             return x, rnn_hidden_states, final_retrieval.permute(0, 2, 3, 1)
         else: 
             global_map = global_map * masks.unsqueeze(1).unsqueeze(1)  ##verify
-            with torch.cuda.device(1):
+            with torch.cuda.device(0):
                 agent_view = torch.cuda.FloatTensor(bs, self.global_map_depth, 51, 51).fill_(0)
             agent_view[:, :, 
                 51//2 - math.floor(self.egocentric_map_size/2):51//2 + math.ceil(self.egocentric_map_size/2), 
@@ -474,3 +571,142 @@ class BaselineNetOracle(Net):
             x = torch.cat(x, dim=1)
         x, rnn_hidden_states = self.state_encoder(x, rnn_hidden_states, masks)
         return x, rnn_hidden_states  
+
+
+class ExplorationNetwork(Net):
+    r"""
+        Network which passes the RGBD Image through VAE and concatenates
+        goal vector with VAE's output and passes that through RNN policy.
+    """
+
+    def __init__(self, batch_size, observation_space, hidden_size, goal_sensor_uuid, device, 
+        object_category_embedding_size, previous_action_embedding_size,
+        egocentric_map_size, global_map_size, coordinate_min, coordinate_max, encoder
+    ):
+        super().__init__()
+        self.goal_sensor_uuid = goal_sensor_uuid
+        self._n_input_goal = observation_space.spaces[
+            self.goal_sensor_uuid
+        ].shape[0]
+        self._hidden_size = hidden_size
+        self.device = device
+        self.egocentric_map_size = egocentric_map_size
+        self.global_map_size = global_map_size
+        self.num_process = batch_size
+        self.coordinate_min = coordinate_min
+        self.coordinate_max = coordinate_max
+        
+        self.to_grid = to_grid(global_map_size, coordinate_min, coordinate_max)
+        # self.map_generator = OccupancyMap(
+        #     self.global_map_size,
+        #     self.egocentric_map_size,
+        #     batch_size,
+        #     self.device,
+        #     self.coordinate_min,
+        #     self.coordinate_max,
+        #     self.vaccant_belief,
+        #     self.occupied_belief
+        # )
+        self.encoder = encoder
+        self.flatten = Flatten()
+        self.perception_layer = PerceptionCNN()
+        
+        self.state_encoder = RNNStateEncoder(
+            object_category_embedding_size + 4096 + 9 + previous_action_embedding_size, self._hidden_size,
+        )
+        
+        self.action_embedding = nn.Embedding(4, previous_action_embedding_size)
+        self.goal_embedding = nn.Embedding(9, object_category_embedding_size)
+        # self.goal_color = torch.tensor([
+        #     [1., 0., 0.0017],  # red
+        #     [0., 0.1897, 0.], # green
+        #     [0.0018, 0.0037, 0.5288],  # blue
+	    #     [1., 0.9310, 0.],  # yellow
+        #     [1., 1., 1.],  # white
+        #     [0.969, 0.0001, 1.],  # pink
+        #     [0., 0., 0.],  # black
+        #     [0., 1., 1.]  # cyan
+        # ], device=self.device)
+        self.coord_max = (275 // 2) + 128
+        self.coord_min = (275 // 2) - 128
+        
+        self.train()
+    
+    @property
+    def output_size(self):
+        return self._hidden_size
+
+    @property
+    def is_blind(self):
+        return False
+
+    @property
+    def num_recurrent_layers(self):
+        return self.state_encoder.num_recurrent_layers
+
+    def get_target_encoding(self, observations):
+        return observations[self.goal_sensor_uuid]
+    
+    # def goal_color_detection(self, observations):
+        
+    #     b, h, w, _ = rgb.shape
+    #     rgb = (observations["rgb"].float() / 255.)  # (B, H, W, C)
+    #     depth = observations["depth"].clone().detach()
+    #     target_encoding = self.get_target_encoding(observations)
+    #     target_idx = torch.argmax(target_encoding, dim=-1)
+    #     target_idx = torch.cat([ target_idx, torch.ones(b, 1) ], dim=-1) # (B, 9)
+        
+    #     goal_image = torch.zeros(b, h, w, 8, device=self.device)  # (B, H, W, 8)
+    #     encoding_vector = torch.zeros((b, 9), device=self.device) # (B, 9)
+        
+    #     for idx, goal_feature in enumerate(self.goal_color):
+    #         diff = torch.norm(rgb - goal_feature, dim=-1)  # (B, H, W)
+    #         if idx == 4 or idx == 6:  # white, black
+    #             threshold = 0.0001
+    #         elif idx == 2 or idx == 1 or idx == 0 or idx == 3:  # blue, green, red, yellow
+    #             threshold = 0.1
+    #         else:  # cyan, pink, red
+    #             threshold = 0.5
+
+    #         # Quantize diff with threshold
+    #         inlier = (diff < threshold) & (depth != 0).squeeze(-1)
+    #         outlier = (diff > threshold) | (depth == 0).squeeze(-1)
+    #         diff[inlier] = 1.
+    #         diff[outlier] = 0.
+            
+    #         size_threshold = 50
+    #         labels, num = label(diff.squeeze(0).cpu().int().numpy(), connectivity=2, return_num=True)
+    #         for label_idx in range(1, num + 1):  # Non-zero labels
+    #             if (labels == label_idx).sum() > size_threshold:
+    #                 inlier = torch.from_numpy((labels == label_idx)).unsqueeze(0)  # (B, H, W)
+    #                 diff[inlier] = 1.0
+    #                 diff[~inlier] = 0.0
+    #                 break
+    #             else:
+    #                 diff.fill_(0.0)
+
+    #         goal_image[..., idx] = diff
+
+    #     goal_image = goal_image.permute(0, 3, 1, 2)
+    #     # Detect goal from image in a binary fashion (1 if goal and 0 otherwise) and project the affinity on the map
+    #     goal_localized = torch.any(goal_image > self.goal_threshold).bool().item()
+    
+    def forward(self, observations, rnn_hidden_states, global_egocentric_map, prev_actions, masks):
+        curr_pose = torch.cat([ observations['gps'], observations['compass'] ], dim=1).to(self.device)
+        # print(global_egocentric_map.shape)
+        with torch.no_grad():
+            z_t, _, var_log = self.encoder(global_egocentric_map[
+                :, self.coord_min:self.coord_max, self.coord_min:self.coord_max
+            ].unsqueeze(1), curr_pose)
+            z_t = self.flatten(z_t).detach()
+            var_log = var_log.detach()
+        bsz = z_t.shape[0]
+        
+        action_embedding = self.action_embedding(prev_actions).squeeze(1)
+        visual_goal_embedding = self.perception_layer(observations['rgb'].permute(0, 3, 1, 2).to(self.device))
+        target_encoding = self.get_target_encoding(observations)
+        target_embedding = self.goal_embedding((target_encoding).type(torch.LongTensor).to(self.device)).squeeze(1)
+        # print(z_t.shape, visual_goal_embedding.shape, target_embedding.shape, action_embedding.shape)
+        x = torch.cat((z_t, visual_goal_embedding, target_embedding, action_embedding), dim = 1)
+        x, rnn_hidden_states = self.state_encoder(x, rnn_hidden_states, masks)
+        return x, rnn_hidden_states, var_log.reshape(bsz, -1)

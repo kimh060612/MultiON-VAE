@@ -5,6 +5,10 @@ __pycache__/
 *$py.class
 map300.pickle
 
+model_checkpoints/
+encoder_checkpoint/
+runs/
+
 send/
 xp/
 xp

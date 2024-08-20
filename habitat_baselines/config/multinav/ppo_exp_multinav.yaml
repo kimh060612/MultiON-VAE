@@ -9,7 +9,7 @@ TENSORBOARD_DIR_EVAL: "eval"
 VIDEO_DIR: "video_dir"
 TEST_EPISODE_COUNT: 1000
 EVAL_CKPT_PATH_DIR: "model_checkpoints"
-NUM_PROCESSES: 4
+NUM_PROCESSES: 1
 SENSORS: ["RGB_SENSOR", "DEPTH_SENSOR"]
 CHECKPOINT_FOLDER: "cpt"
 NUM_UPDATES: 300000
@@ -28,13 +28,13 @@ RL:
     # ppo params
     clip_param: 0.2
     ppo_epoch: 2
-    num_mini_batch: 4
+    num_mini_batch: 1
     value_loss_coef: 0.5
     entropy_coef: 0.01
     lr: 2.5e-4
     eps: 1e-5
     max_grad_norm: 0.2
-    num_steps: 128
+    num_steps: 96
     use_gae: True
     gamma: 0.99
     tau: 0.95
@@ -43,6 +43,7 @@ RL:
     reward_window_size: 50
     use_normalized_advantage: False
     hidden_size: 768
+    entropy_weight: 0.0001
   MAPS:
     egocentric_map_size: 13
     global_egocentric_map_size: 256
@@ -53,3 +54,4 @@ RL:
     vaccant_belief: -100
     occupied_belief: 100
     map_collection_stride: 10
+    map_checkpoint_path: "encoder_checkpoint/"

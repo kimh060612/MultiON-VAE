@@ -43,6 +43,9 @@ _C.EVAL = CN()
 # The split to evaluate on
 _C.EVAL.SPLIT = "val"
 _C.EVAL.USE_CKPT_CONFIG = True
+# Turn On/Off Dataset Accumulation Function
+_C.EVAL.GATHER_MAP_DATA = True
+_C.EVAL.MAP_DATA_PATH = "map_data/"
 # -----------------------------------------------------------------------------
 # REINFORCEMENT LEARNING (RL) ENVIRONMENT CONFIG
 # -----------------------------------------------------------------------------
