@@ -165,13 +165,13 @@ class Attention(nn.Module):
         else:
             max_len, batch_size = inputs.size()[:2]
         
-        print(batch_size, max_len)
+        print(batch_size, max_len) # 2 1 512
         # apply attention layer
         weights = torch.bmm(inputs,
             self.att_weights  # (1, hidden_size)
             .permute(1, 0)  # (hidden_size, 1)
             .unsqueeze(0)  # (1, hidden_size, 1)
-            .repeat(batch_size, 1, 1) # (batch_size, hidden_size, 1)
+            .repeat(batch_size, 1, 1) # (batch_size, hidden_size, 1) 2 512 1
         )
     
         attentions = torch.softmax(F.relu(weights.squeeze()), dim=-1)
@@ -225,7 +225,7 @@ class RNNAttentionStateEncoder(nn.Module):
             num_layers=num_layers,
         )
         self.atten = Attention(
-            hidden_size=hidden_size*2,
+            hidden_size=hidden_size,
             batch_first=True
         )
         self.layer_init()
