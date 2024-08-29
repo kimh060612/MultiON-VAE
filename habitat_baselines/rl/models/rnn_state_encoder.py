@@ -165,7 +165,7 @@ class Attention(nn.Module):
         else:
             max_len, batch_size = inputs.size()[:2]
         
-        print(batch_size, max_len) # 2 1 512
+        # print(batch_size, max_len) # 2 1 512
         # apply attention layer
         weights = torch.bmm(inputs,
             self.att_weights  # (1, hidden_size)
@@ -189,7 +189,7 @@ class Attention(nn.Module):
         attentions = masked.div(_sums)
 
         # apply attention weights
-        weighted = torch.mul(inputs, attentions.expand_as(inputs))
+        weighted = torch.mul(inputs, attentions.unsqueeze(-1).expand_as(inputs))
 
         # get the final fixed vector representations of the sentences
         representations = weighted.sum(1).squeeze()
