@@ -328,7 +328,7 @@ class RNNAttentionStateEncoder(nn.Module):
         # x is a (T, N, -1) tensor
         x = torch.cat(outputs, dim=0)
         print(x.shape)
-        x, _ = self.atten(x.permute(1, 0), masks.permute(1, 0)) # skip connect
+        x, _ = self.atten(x.permute(1, 0, 2), masks.permute(1, 0, 2)) # skip connect
         x = x.view(t * n, -1)  # flatten
 
         hidden_states = self._pack_hidden(hidden_states)
