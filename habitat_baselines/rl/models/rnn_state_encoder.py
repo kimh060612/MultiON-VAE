@@ -172,7 +172,7 @@ class Attention(nn.Module):
             .permute(1, 0)  # (hidden_size, 1)
             .unsqueeze(0)  # (1, hidden_size, 1)
             .repeat(batch_size, 1, 1) # (batch_size, hidden_size, 1) 2 512 1
-        )
+        ) # 2 1 1
     
         attentions = torch.softmax(F.relu(weights.squeeze()), dim=-1)
 
@@ -322,15 +322,13 @@ class RNNAttentionStateEncoder(nn.Module):
                 self._mask_hidden(
                     hidden_states, masks[start_idx].view(1, -1, 1)
                 ),
-            )
-            # rnn_attn, _ = nn.utils.rnn.pad_packed_sequence(rnn_scores, batch_first=True)
-            print(rnn_scores.shape)
-            rnn_attn, _ = self.atten(rnn_scores, masks[start_idx].view(1, -1, 1)) # skip connect
-
-            outputs.append(rnn_attn)
+            ) 
+            outputs.append(rnn_scores)
 
         # x is a (T, N, -1) tensor
         x = torch.cat(outputs, dim=0)
+        print(x.shape)
+        x, _ = self.atten(x.permute(1, 0), masks.permute(1, 0)) # skip connect
         x = x.view(t * n, -1)  # flatten
 
         hidden_states = self._pack_hidden(hidden_states)
