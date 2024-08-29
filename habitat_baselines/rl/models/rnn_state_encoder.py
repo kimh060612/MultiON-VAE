@@ -225,7 +225,7 @@ class RNNAttentionStateEncoder(nn.Module):
         )
         self.atten = Attention(
             hidden_size=hidden_size*2,
-            batch_first=True
+            batch_first=False
         )
         self.layer_init()
 
@@ -322,8 +322,8 @@ class RNNAttentionStateEncoder(nn.Module):
                     hidden_states, masks[start_idx].view(1, -1, 1)
                 ),
             )
-            rnn_attn, _ = nn.utils.rnn.pad_packed_sequence(rnn_scores, batch_first=True)
-            rnn_attn, _ = self.atten(rnn_attn, masks[start_idx].view(1, -1, 1)) # skip connect
+            # rnn_attn, _ = nn.utils.rnn.pad_packed_sequence(rnn_scores, batch_first=True)
+            rnn_attn, _ = self.atten(rnn_scores, masks[start_idx].view(1, -1, 1)) # skip connect
 
             outputs.append(rnn_attn)
 
