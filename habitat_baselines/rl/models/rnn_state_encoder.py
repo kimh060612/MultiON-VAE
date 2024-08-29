@@ -190,7 +190,7 @@ class Attention(nn.Module):
 
         # apply attention weights
         weighted = torch.mul(inputs, attentions.unsqueeze(-1).expand_as(inputs))
-
+        # [1 128 512] X [128 512 1]
         # get the final fixed vector representations of the sentences
         representations = weighted.sum(1).squeeze()
 
@@ -327,8 +327,8 @@ class RNNAttentionStateEncoder(nn.Module):
 
         # x is a (T, N, -1) tensor
         x = torch.cat(outputs, dim=0)
-        print(x.shape)
         x, _ = self.atten(x.permute(1, 0, 2), masks.permute(1, 0)) # skip connect
+        print(x.shape) # 128 1 512
         x = x.view(t * n, -1)  # flatten
 
         hidden_states = self._pack_hidden(hidden_states)
