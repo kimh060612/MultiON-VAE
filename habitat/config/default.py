@@ -122,6 +122,35 @@ _C.TASK.POSITION_SENSOR.TYPE = "PositionSensor"
 _C.TASK.HEADING_SENSOR = CN()
 _C.TASK.HEADING_SENSOR.TYPE = "HeadingSensor"
 # -----------------------------------------------------------------------------
+# GT EGO MAP SENSOR
+# -----------------------------------------------------------------------------
+_C.TASK.GT_EGO_MAP = CN()
+_C.TASK.GT_EGO_MAP.TYPE = "GTEgoMap"
+_C.TASK.GT_EGO_MAP.MAP_SIZE = 101
+_C.TASK.GT_EGO_MAP.MAP_SCALE = 0.05
+_C.TASK.GT_EGO_MAP.MAX_SENSOR_RANGE = 3.25
+_C.TASK.GT_EGO_MAP.HEIGHT_THRESH = [0.2, 1.5]
+# -----------------------------------------------------------------------------
+# GT EGO MAP ANTICIPATED SENSOR
+# -----------------------------------------------------------------------------
+_C.TASK.GT_EGO_MAP_ANTICIPATED = CN()
+_C.TASK.GT_EGO_MAP_ANTICIPATED.TYPE = "GTEgoMapAnticipated"
+_C.TASK.GT_EGO_MAP_ANTICIPATED.MAP_SIZE = 101
+_C.TASK.GT_EGO_MAP_ANTICIPATED.MAP_SCALE = 0.05
+_C.TASK.GT_EGO_MAP_ANTICIPATED.MAX_SENSOR_RANGE = 5.05
+_C.TASK.GT_EGO_MAP_ANTICIPATED.HEIGHT_THRESH = [0.2, 1.5]
+# Use grown occupancy or full occupancy
+# Can be grown_occupancy / full_occupancy / wall_occupancy
+_C.TASK.GT_EGO_MAP_ANTICIPATED.REGION_GROWING_ITERATIONS = 2
+_C.TASK.GT_EGO_MAP_ANTICIPATED.GT_TYPE = "grown_occupancy"
+_C.TASK.GT_EGO_MAP_ANTICIPATED.ALL_MAPS_INFO_PATH = (
+    "data/datasets/exploration/gibson/v1/val_mini/occant_gt_maps/all_maps_info.json"
+)
+# field-of-view of the GT generated
+_C.TASK.GT_EGO_MAP_ANTICIPATED.WALL_FOV = 180.0
+# for anticipated_occupancy option
+_C.TASK.GT_EGO_MAP_ANTICIPATED.NUM_TOPDOWN_MAP_SAMPLE_POINTS = 20000
+# -----------------------------------------------------------------------------
 # COMPASS SENSOR
 # -----------------------------------------------------------------------------
 _C.TASK.COMPASS_SENSOR = CN()

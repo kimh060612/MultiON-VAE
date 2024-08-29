@@ -58,6 +58,12 @@ class BaselineRegistry(Registry):
         return cls._register_impl("env", to_register, name, assert_type=RLEnv)
 
     @classmethod
+    def register_sensor(cls, to_register=None, *, name: Optional[str] = None):
+        from habitat.core.simulator import Sensor
+        
+        return cls._register_impl("sensor", to_register, name, assert_type=Sensor)
+
+    @classmethod
     def get_env(cls, name):
         return cls._get_impl("env", name)
 

@@ -27,9 +27,9 @@ def main():
 
     parser.add_argument(
         "--agent-type",
-        choices=["no-map", "oracle", "oracle-ego", "proj-neural", "obj-recog", "exp-multinav"],
+        choices=["no-map", "oracle", "oracle-ego", "proj-neural", "obj-recog", "exp-multinav", "ea-multinav"],
         required=True,
-        help="agent type: oracle, oracleego, projneural, objrecog, expmultinav",
+        help="agent type: oracle, oracleego, projneural, objrecog, expmultinav, eamultinav",
     )
 
     parser.add_argument(
@@ -78,8 +78,13 @@ def run_exp(exp_config: str, run_type: str, agent_type: str, opts=None) -> None:
         config.defrost()
         config.RL.PPO.hidden_size = 512
         config.freeze()
-    else:
+    elif agent_type == "exp-multinav":
         trainer_init = baseline_registry.get_trainer("exploration-multion")
+        config.defrost()
+        config.RL.PPO.hidden_size = 512
+        config.freeze()
+    elif agent_type == "ea-multinav":
+        trainer_init = baseline_registry.get_trainer("exploration-attention")
         config.defrost()
         config.RL.PPO.hidden_size = 512
         config.freeze()

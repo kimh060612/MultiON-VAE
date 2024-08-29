@@ -4,8 +4,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from habitat_baselines.common.base_trainer import BaseRLTrainerNonOracle, BaseRLTrainerOracle, BaseTrainer, BaseRLTrainerExploration
-from habitat_baselines.rl.ppo.ppo_trainer import PPOTrainerO, PPOTrainerNO, RolloutStorageOracle, RolloutStorageNonOracle, RolloutStorageExploration
+from habitat_baselines.common.base_trainer import BaseRLTrainerNonOracle, BaseRLTrainerOracle, BaseTrainer, BaseRLTrainerExploration, BaseRLTrainerExpAttention
+from habitat_baselines.rl.ppo.ppo_trainer import PPOTrainerO, PPOTrainerNO, RolloutStorageOracle, RolloutStorageNonOracle, RolloutStorageExploration, RolloutStorageExpAttention
 
 __all__ = [
     "BaseTrainer", 
@@ -17,5 +17,7 @@ __all__ = [
     "RolloutStorage", 
     "RolloutStorageOracle", 
     "RolloutStorageNonOracle",
-    "RolloutStorageExploration"
+    "RolloutStorageExploration",
+    "BaseRLTrainerExpAttention",
+    "RolloutStorageExpAttention"
 ]

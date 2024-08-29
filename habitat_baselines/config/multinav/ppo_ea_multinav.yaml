@@ -9,7 +9,7 @@ TENSORBOARD_DIR_EVAL: "eval"
 VIDEO_DIR: "video_dir"
 TEST_EPISODE_COUNT: 1000
 EVAL_CKPT_PATH_DIR: "model_checkpoints"
-NUM_PROCESSES: 12
+NUM_PROCESSES: 18
 SENSORS: ["RGB_SENSOR", "DEPTH_SENSOR"]
 CHECKPOINT_FOLDER: "cpt"
 NUM_UPDATES: 300000
@@ -43,12 +43,10 @@ RL:
     reward_window_size: 50
     use_normalized_advantage: False
     hidden_size: 768
+    map_reward_coeff: 0.01
   MAPS:
     egocentric_map_size: 13
-    global_egocentric_map_size: 256
     global_map_size: 275
     global_map_depth: 32
     coordinate_min: -110.0
     coordinate_max:  110.0
-    vaccant_belief: -100
-    occupied_belief: 100

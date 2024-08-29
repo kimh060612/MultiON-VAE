@@ -1,10 +1,13 @@
 from typing import Dict, Tuple
 from einops import rearrange
+from multiprocess.pool import Pool
 import torch.nn.functional as F
 import torch_scatter
 import torch
 import numpy as np
 import math
+import cv2
+from einops import asnumpy
 
 """
 Code adapted from https://github.com/saimwani/multiON
@@ -395,4 +398,165 @@ class OccupancyMapRollout():
         ) = self.registration.forward(observations, self.global_allocentric_occupancy_map[self.step], projection)
         self.step += 1
     
+class TopDownOccupancyMap():
+    def __init__(self, num_process, global_map_size, coordinate_min, coordinate_max, camera_pos, height_thres=[0.2, 1.5], d_fov=79, depth_shape=(256, 256), cpu = 16):
+        self.map_size = global_map_size
+        self.num_process = num_process
+        self.coordinate_min = coordinate_min
+        self.coordinate_max = coordinate_max
+        self.map_scale = (coordinate_max - coordinate_min) / global_map_size
+        # Agent height for pointcloud tranforms
+        self.camera_height = camera_pos
+        self.max_forward_range = 3.25
+        # self.pool = Pool(cpu)
+        # Compute intrinsic matrix
+        depth_H = depth_shape[0]
+        depth_W = depth_shape[1]
+        hfov = float(d_fov) * np.pi / 180
+        vfov = 2 * np.arctan((depth_H / depth_W) * np.tan(hfov / 2.0))
+        self.intrinsic_matrix = np.array(
+            [
+                [1 / np.tan(hfov / 2.0), 0.0, 0.0, 0.0],
+                [0.0, 1 / np.tan(vfov / 2.0), 0.0, 0.0],
+                [0.0, 0.0, 1, 0],
+                [0.0, 0.0, 0, 1],
+            ]
+        )
+        self.inverse_intrinsic_matrix = np.linalg.inv(self.intrinsic_matrix)
+
+        # Height thresholds for obstacles
+        self.height_thresh = height_thres
+
+        # Depth processing
+        self.min_depth = 0.
+        self.max_depth = 10.
+
+        # Pre-compute a grid of locations for depth projection
+        W = depth_shape[0]
+        H = depth_shape[1]
+        self.proj_xs, self.proj_ys = np.meshgrid(
+            np.linspace(-1, 1, W), np.linspace(1, -1, H)
+        )
     
+    # def __getstate__(self):
+    #     self_dict = self.__dict__.copy()
+    #     del self_dict['pool']
+    #     return self_dict
+
+    # def __setstate__(self, state):
+    #     self.__dict__.update(state)
+    
+    def safe_assign(self, im_map, x_idx, y_idx, value):
+        try:
+            im_map[x_idx, y_idx] = value
+        except IndexError:
+            valid_idx1 = np.logical_and(x_idx >= 0, x_idx < im_map.shape[0])
+            valid_idx2 = np.logical_and(y_idx >= 0, y_idx < im_map.shape[1])
+            valid_idx = np.logical_and(valid_idx1, valid_idx2)
+            im_map[x_idx[valid_idx], y_idx[valid_idx]] = value
+    
+    def convert_to_pointcloud(self, depth):
+        """
+        Inputs:
+            depth = (H, W, 1) numpy array
+
+        Returns:
+            xyz_camera = (N, 3) numpy array for (X, Y, Z) in egocentric world coordinates
+        """
+
+        depth_float = depth.astype(np.float32)[..., 0]
+
+        # =========== Convert to camera coordinates ============
+        W = depth.shape[1]
+        xs = np.copy(self.proj_xs).reshape(-1)
+        ys = np.copy(self.proj_ys).reshape(-1)
+        depth_float = depth_float.reshape(-1)
+        # Filter out invalid depths
+        valid_depths = (depth_float != self.min_depth) & (
+            depth_float <= self.max_forward_range
+        )
+        # print(xs.shape)
+        # print(ys.shape)
+        # print(valid_depths.shape)
+        xs = xs[valid_depths]
+        ys = ys[valid_depths]
+        depth_float = depth_float[valid_depths]
+        # Unproject
+        # negate depth as the camera looks along -Z
+        xys = np.vstack(
+            (
+                xs * depth_float,
+                ys * depth_float,
+                -depth_float,
+                np.ones(depth_float.shape),
+            )
+        )
+        inv_K = self.inverse_intrinsic_matrix
+        xyz_camera = np.matmul(inv_K, xys).T  # XYZ in the camera coordinate system
+        xyz_camera = xyz_camera[:, :3] / xyz_camera[:, 3][:, np.newaxis]
+
+        return xyz_camera
+    
+    def compute_seen_area(self, sim_depth):
+        """
+        Project pixels visible in depth-map to ground-plane
+        """
+        depth = sim_depth * (self.max_depth - self.min_depth) + self.min_depth
+
+        XYZ_ego = self.convert_to_pointcloud(depth)
+
+        # Adding agent's height to the pointcloud
+        XYZ_ego[:, 1] += self.camera_height
+
+        # Convert to grid coordinate system
+        V = self.map_size
+        Vby2 = V // 2
+
+        points = XYZ_ego
+
+        grid_x = (points[:, 0] / self.map_scale) + Vby2
+        grid_y = (points[:, 2] / self.map_scale) + V
+
+        # Filter out invalid points
+        valid_idx = (
+            (grid_x >= 0) & (grid_x <= V - 1) & (grid_y >= 0) & (grid_y <= V - 1)
+        )
+        points = points[valid_idx, :]
+        grid_x = grid_x[valid_idx].astype(int)
+        grid_y = grid_y[valid_idx].astype(int)
+
+        # Create empty maps for the two channels
+        obstacle_mat = np.zeros((self.map_size, self.map_size), np.uint8)
+        explore_mat = np.zeros((self.map_size, self.map_size), np.uint8)
+
+        # Compute obstacle locations
+        high_filter_idx = points[:, 1] < self.height_thresh[1]
+        low_filter_idx = points[:, 1] > self.height_thresh[0]
+        obstacle_idx = np.logical_and(low_filter_idx, high_filter_idx)
+
+        self.safe_assign(obstacle_mat, grid_y[obstacle_idx], grid_x[obstacle_idx], 1)
+        kernel = np.ones((3, 3), np.uint8)
+        obstacle_mat = cv2.dilate(obstacle_mat, kernel, iterations=1)
+
+        # Compute explored locations
+        explored_idx = high_filter_idx
+        self.safe_assign(explore_mat, grid_y[explored_idx], grid_x[explored_idx], 1)
+        kernel = np.ones((3, 3), np.uint8)
+        obstacle_mat = cv2.dilate(obstacle_mat, kernel, iterations=1)
+
+        # Smoothen the maps
+        kernel = np.ones((3, 3), np.uint8)
+
+        obstacle_mat = cv2.morphologyEx(obstacle_mat, cv2.MORPH_CLOSE, kernel)
+        explore_mat = cv2.morphologyEx(explore_mat, cv2.MORPH_CLOSE, kernel)
+
+        # Ensure all expanded regions in obstacle_mat are accounted for in explored_mat
+        explore_mat = np.logical_or(explore_mat, obstacle_mat)
+        seen_area = np.sum(explore_mat > 0)
+        return seen_area
+    
+    def compute_seen_reward(self, observation):
+        np_depth = asnumpy(observation['depth'])
+        reward = [ self.compute_seen_area(np_depth[i, ...]) for i in range(self.num_process) ]
+        # reward = self.pool.map(self.compute_seen_area, depth_list)
+        return torch.Tensor(reward).reshape(-1, 1)

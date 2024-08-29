@@ -9,7 +9,7 @@ TENSORBOARD_DIR_EVAL: "eval"
 VIDEO_DIR: "video_dir"
 TEST_EPISODE_COUNT: 1000
 EVAL_CKPT_PATH_DIR: "model_checkpoints"
-NUM_PROCESSES: 4
+NUM_PROCESSES: 5
 SENSORS: ["RGB_SENSOR", "DEPTH_SENSOR"]
 CHECKPOINT_FOLDER: "cpt"
 NUM_UPDATES: 300000
@@ -45,13 +45,15 @@ RL:
     hidden_size: 768
     entropy_weight: 0.0001
   MAPS:
-    egocentric_map_size: 13
-    global_egocentric_map_size: 256
-    global_map_size: 275
+    egocentric_map_size: 64
+    global_egocentric_map_size: 64
+    global_map_size: 105
     global_map_depth: 32
-    coordinate_min: -110.0
-    coordinate_max:  110.0
+    coordinate_min: -42.0
+    coordinate_max:  42.0
     vaccant_belief: -100
     occupied_belief: 100
+    height_min: 0.0
+    height_max: 1.5
     map_collection_stride: 10
     map_checkpoint_path: "encoder_checkpoint/"
