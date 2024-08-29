@@ -191,6 +191,7 @@ class Attention(nn.Module):
         # apply attention weights
         weighted = torch.mul(inputs, attentions.unsqueeze(-1).expand_as(inputs))
         # [1 128 512] X [128 512 1]
+        print(weighted.shape)
         # get the final fixed vector representations of the sentences
         representations = weighted.sum(1).squeeze()
 
