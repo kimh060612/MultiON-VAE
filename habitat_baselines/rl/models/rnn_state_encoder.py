@@ -193,9 +193,9 @@ class Attention(nn.Module):
         # [1 128 512] X [128 512 1]
         print(weighted.shape)
         # get the final fixed vector representations of the sentences
-        representations = weighted.sum(1).squeeze()
+        # representations = weighted.sum(1).squeeze()
 
-        return representations, attentions
+        return weighted, attentions
 
 class RNNAttentionStateEncoder(nn.Module):
     def __init__(
