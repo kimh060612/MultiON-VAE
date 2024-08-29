@@ -189,7 +189,7 @@ class Attention(nn.Module):
         attentions = masked.div(_sums)
 
         # apply attention weights
-        weighted = torch.mul(inputs, attentions.unsqueeze(-1).expand_as(inputs))
+        weighted = torch.mul(inputs, attentions.expand_as(inputs))
 
         # get the final fixed vector representations of the sentences
         representations = weighted.sum(1).squeeze()
