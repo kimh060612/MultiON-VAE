@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from habitat_baselines.common.utils import CategoricalNet, Flatten, to_grid
 from habitat_baselines.rl.models.projection import Projection, RotateTensor, get_grid
-from habitat_baselines.rl.models.rnn_state_encoder import RNNStateEncoder
+from habitat_baselines.rl.models.rnn_state_encoder import RNNStateEncoder, RNNAttentionStateEncoder
 from habitat_baselines.rl.models.simple_cnn import RGBCNNNonOracle, RGBCNNOracle, MapCNN
 from habitat_baselines.rl.models.projection import Projection
 from habitat_baselines.rl.models.geometry import OccupancyMap, TopDownOccupancyMap
@@ -844,7 +844,7 @@ class ExpAttentionNetwork(Net):
         self.flatten = Flatten()
 
         if self.use_previous_action:
-            self.state_encoder = RNNStateEncoder(
+            self.state_encoder = RNNAttentionStateEncoder( # RNNStateEncoder(
                 self._hidden_size + 256 + object_category_embedding_size + 
                 previous_action_embedding_size, self._hidden_size,
             )
