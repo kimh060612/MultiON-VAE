@@ -164,7 +164,8 @@ class Attention(nn.Module):
             batch_size, max_len = inputs.size()[:2]
         else:
             max_len, batch_size = inputs.size()[:2]
-            
+        
+        print(batch_size, max_len)
         # apply attention layer
         weights = torch.bmm(inputs,
             self.att_weights  # (1, hidden_size)
@@ -323,7 +324,8 @@ class RNNAttentionStateEncoder(nn.Module):
                 ),
             )
             # rnn_attn, _ = nn.utils.rnn.pad_packed_sequence(rnn_scores, batch_first=True)
-            rnn_attn, _ = self.atten(rnn_scores.permute(1, 0), masks[start_idx].view(1, -1, 1)) # skip connect
+            print(rnn_scores.shape)
+            rnn_attn, _ = self.atten(rnn_scores, masks[start_idx].view(1, -1, 1)) # skip connect
 
             outputs.append(rnn_attn)
 
