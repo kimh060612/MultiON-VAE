@@ -142,60 +142,22 @@ class RNNStateEncoder(nn.Module):
             return self.single_forward(x, hidden_states, masks)
         else:
             return self.seq_forward(x, hidden_states, masks)
-
-class Attention(nn.Module):
-    def __init__(self, hidden_size, batch_first=False):
-        super(Attention, self).__init__()
-
-        self.hidden_size = hidden_size
-        self.batch_first = batch_first
-
-        self.att_weights = nn.Parameter(torch.Tensor(1, hidden_size), requires_grad=True)
-
-        stdv = 1.0 / np.sqrt(self.hidden_size)
-        for weight in self.att_weights:
-            nn.init.uniform_(weight, -stdv, stdv)
-
-    def get_mask(self):
-        pass
-
-    def forward(self, inputs, mask):
-        if self.batch_first:
-            batch_size, max_len = inputs.size()[:2]
-        else:
-            max_len, batch_size = inputs.size()[:2]
         
-        # print(batch_size, max_len) # 2 1 512
-        # apply attention layer
-        weights = torch.bmm(inputs,
-            self.att_weights  # (1, hidden_size)
-            .permute(1, 0)  # (hidden_size, 1)
-            .unsqueeze(0)  # (1, hidden_size, 1)
-            .repeat(batch_size, 1, 1) # (batch_size, hidden_size, 1) 2 512 1
-        ) # 2 1 1
-    
-        attentions = torch.softmax(F.relu(weights.squeeze()), dim=-1)
+class LSTMAttention(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim=1, num_layers=1):
+        super(LSTMAttention, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first=True)
+        self.attention = nn.Linear(hidden_dim, 1)
+        self.fc = nn.Linear(hidden_dim, output_dim)
 
-        # # create mask based on the sentence lengths
-        # mask = torch.ones(attentions.size(), requires_grad=True).cuda()
-        # for i, l in enumerate(lengths):  # skip the first sentence
-        #     if l < max_len:
-        #         mask[i, l:] = 0
-
-        # apply mask and renormalize attention scores (weights)
-        masked = attentions * mask
-        _sums = masked.sum(-1).unsqueeze(-1)  # sums per row
-        
-        attentions = masked.div(_sums)
-
-        # apply attention weights
-        weighted = torch.mul(inputs, attentions.unsqueeze(-1).expand_as(inputs))
-        # [1 128 512] X [128 512 1]
-        # print(weighted.shape)
-        # get the final fixed vector representations of the sentences
-        # representations = weighted.sum(1).squeeze()
-
-        return weighted, attentions
+    def forward(self, x):
+        lstm_out, _ = self.lstm(x)
+        attention_weights = torch.softmax(self.attention(lstm_out).squeeze(-1), dim=-1)
+        context_vector = torch.sum(lstm_out * attention_weights.unsqueeze(-1), dim=1)
+        out = self.fc(context_vector)
+        return out
 
 class RNNAttentionStateEncoder(nn.Module):
     def __init__(
@@ -225,10 +187,7 @@ class RNNAttentionStateEncoder(nn.Module):
             hidden_size=hidden_size,
             num_layers=num_layers,
         )
-        self.atten = Attention(
-            hidden_size=hidden_size,
-            batch_first=True
-        )
+        self.attention = nn.Linear(hidden_size, 1)
         self.layer_init()
 
     def layer_init(self):
@@ -328,12 +287,15 @@ class RNNAttentionStateEncoder(nn.Module):
 
         # x is a (T, N, -1) tensor
         x = torch.cat(outputs, dim=0)
-        x, _ = self.atten(x.permute(1, 0, 2), masks.permute(1, 0)) # skip connect
+        x = x.view(t * n, -1)  # flatten
+        attention_weights = torch.softmax(self.attention(x).squeeze(-1), dim=-1)
+        out = torch.sum(x * attention_weights.unsqueeze(-1), dim=1)
+        print(out.shape)
+        # x, _ = self.atten(x.permute(1, 0, 2), masks.permute(1, 0)) # skip connect
         # print(x.shape, t, n) # 128 1 512
-        x = x.contiguous().view(t * n, -1)  # flatten
 
         hidden_states = self._pack_hidden(hidden_states)
-        return x, hidden_states
+        return out, hidden_states
 
     def forward(self, x, hidden_states, masks):
         if x.size(0) == hidden_states.size(1):
