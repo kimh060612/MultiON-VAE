@@ -2829,32 +2829,32 @@ class PPOTrainerExpAttn(BaseRLTrainerExpAttention):
                 #     total_left_actions + total_right_actions + total_look_up_actions + 
                 #     total_look_down_actions
                 # )
-                writer.add_histogram(
-                    "map_encoder_cnn_0", self.actor_critic.net.map_encoder.cnn[0].weight, count_steps
-                )
-                writer.add_histogram(
-                    "map_encoder_cnn_1", self.actor_critic.net.map_encoder.cnn[2].weight, count_steps
-                )
-                writer.add_histogram(
-                    "map_encoder_cnn_2", self.actor_critic.net.map_encoder.cnn[4].weight, count_steps
-                )
-                writer.add_histogram(
-                    "map_encoder_linear", self.actor_critic.net.map_encoder.cnn[6].weight, count_steps
-                )
+                # writer.add_histogram(
+                #     "map_encoder_cnn_0", self.actor_critic.net.map_encoder.cnn[0].weight, count_steps
+                # )
+                # writer.add_histogram(
+                #     "map_encoder_cnn_1", self.actor_critic.net.map_encoder.cnn[2].weight, count_steps
+                # )
+                # writer.add_histogram(
+                #     "map_encoder_cnn_2", self.actor_critic.net.map_encoder.cnn[4].weight, count_steps
+                # )
+                # writer.add_histogram(
+                #     "map_encoder_linear", self.actor_critic.net.map_encoder.cnn[6].weight, count_steps
+                # )
                 
                 
-                writer.add_histogram(
-                    "visual_encoder_cnn_0", self.actor_critic.net.visual_encoder.cnn[0].weight, count_steps
-                )
-                writer.add_histogram(
-                    "visual_encoder_cnn_1", self.actor_critic.net.visual_encoder.cnn[2].weight, count_steps
-                )
-                writer.add_histogram(
-                    "visual_encoder_cnn_2", self.actor_critic.net.visual_encoder.cnn[4].weight, count_steps
-                )
-                writer.add_histogram(
-                    "visual_encoder_linear", self.actor_critic.net.image_features_linear.weight, count_steps
-                )
+                # writer.add_histogram(
+                #     "visual_encoder_cnn_0", self.actor_critic.net.visual_encoder.cnn[0].weight, count_steps
+                # )
+                # writer.add_histogram(
+                #     "visual_encoder_cnn_1", self.actor_critic.net.visual_encoder.cnn[2].weight, count_steps
+                # )
+                # writer.add_histogram(
+                #     "visual_encoder_cnn_2", self.actor_critic.net.visual_encoder.cnn[4].weight, count_steps
+                # )
+                # writer.add_histogram(
+                #     "visual_encoder_linear", self.actor_critic.net.image_features_linear.weight, count_steps
+                # )
                 writer.add_scalar(
                     "train/found_action_prob", total_found_actions/total_actions, count_steps
                 )
