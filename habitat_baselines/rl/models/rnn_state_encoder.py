@@ -289,7 +289,7 @@ class RNNAttentionStateEncoder(nn.Module):
         x = torch.cat(outputs, dim=0)
         x = x.view(t * n, -1)  # flatten
         attention_weights = torch.softmax(self.attention(x).squeeze(-1), dim=-1)
-        out = torch.sum(x * attention_weights.unsqueeze(-1), dim=1)
+        out = x * attention_weights.unsqueeze(-1)
         print(out.shape)
         # x, _ = self.atten(x.permute(1, 0, 2), masks.permute(1, 0)) # skip connect
         # print(x.shape, t, n) # 128 1 512
