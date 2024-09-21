@@ -8,6 +8,9 @@ map300.pickle
 model_checkpoints/
 encoder_checkpoint/
 runs/
+map_data/*
+map_data
+*.mp4
 
 send/
 xp/

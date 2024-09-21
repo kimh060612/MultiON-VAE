@@ -12,7 +12,6 @@ from einops import asnumpy
 """
 Code adapted from https://github.com/saimwani/multiON
 """
-
 def get_grid(pose, grid_size, device):
     """
     Input:
@@ -71,6 +70,23 @@ class to_grid():
 
         return gps_x, gps_y
 
+class RotateTensor:
+    def __init__(self, device):
+        self.device = device
+
+    def forward(self, x_gp, heading):
+        sin_t = torch.sin(heading.squeeze(1))
+        cos_t = torch.cos(heading.squeeze(1))
+        A = torch.zeros(x_gp.size(0), 2, 3).to(self.device)
+        A[:, 0, 0] = cos_t
+        A[:, 0, 1] = sin_t
+        A[:, 1, 0] = -sin_t
+        A[:, 1, 1] = cos_t
+
+        grid = F.affine_grid(A, x_gp.size())
+        rotated_x_gp = F.grid_sample(x_gp, grid)
+        return rotated_x_gp
+
 class ComputeSpatialLocs():
     def __init__(self, egocentric_map_size, global_map_size, 
         device, coordinate_min, coordinate_max
@@ -93,11 +109,12 @@ class ComputeSpatialLocs():
         X = xx * Z
         Y = yy * Z
         
+        valid_inputs = (depth != 0)
         # X ground projection and Y ground projection
         x_gp = ( (X / self.local_scale) + (self.egocentric_map_size-1)/2).round().long() # (bs, 1, imh, imw)
         y_gp = (-(Z / self.local_scale) + (self.egocentric_map_size-1)/2).round().long() # (bs, 1, imh, imw)
         
-        return torch.cat([x_gp, y_gp], dim=1), Y
+        return torch.cat([x_gp, y_gp], dim=1), Y, valid_inputs
 
 class ProjectToGroundPlane():
     def __init__(self, egocentric_map_size, device, 
@@ -111,29 +128,37 @@ class ProjectToGroundPlane():
         self.height_min = height_min
         self.height_max = height_max
 
-    def forward(self, img, spatial_locs):
+    def forward(self, img, spatial_locs, valid_map):
         (outh, outw) = (self.egocentric_map_size, self.egocentric_map_size)
         bs, f, HbyK, WbyK = img.shape
         K = 1
+        eps=-1e16
         # Sub-sample spatial_locs, valid_inputs according to img_feats resolution.
         idxes_ss = ((torch.arange(0, HbyK, 1)*K).long().to(self.device), \
                     (torch.arange(0, WbyK, 1)*K).long().to(self.device))
 
         spatial_locs_ss = spatial_locs[:, :, idxes_ss[0][:, None], idxes_ss[1]] # (bs, 2, HbyK, WbyK)
+        valid_inputs_ss = valid_map[:, :, idxes_ss[0][:, None], idxes_ss[1]] # (bs, 1, HbyK, WbyK)
+        valid_inputs_ss = valid_inputs_ss.squeeze(1) # (bs, HbyK, WbyK)
+        invalid_inputs_ss = ~valid_inputs_ss
         
         # Filter out invalid spatial locations
         invalid_spatial_locs = (spatial_locs_ss[:, 1] >= outh) | (spatial_locs_ss[:, 1] < 0 ) | \
                             (spatial_locs_ss[:, 0] >= outw) | (spatial_locs_ss[:, 0] < 0 ) # (bs, H, W)
+
+        invalid_writes = invalid_spatial_locs | invalid_inputs_ss
         
         # Set the idxes for all invalid locations to (0, 0)
         spatial_locs_ss[:, 0][invalid_spatial_locs] = 0
         spatial_locs_ss[:, 1][invalid_spatial_locs] = 0
-
+        invalid_writes_f = rearrange(invalid_writes, 'b h w -> b () h w').float()
+        img_masked = img * (1 - invalid_writes_f) + eps * invalid_writes_f
+        
         # Linearize ground-plane indices (linear idx = y * W + x)
         linear_locs_ss = spatial_locs_ss[:, 1] * outw + spatial_locs_ss[:, 0] # (bs, H, W)
         linear_locs_ss = rearrange(linear_locs_ss, 'b h w -> b () (h w)')
         linear_locs_ss = linear_locs_ss.expand(-1, f, -1) # .contiguous()
-        img_target = rearrange(img, 'b e h w -> b e (h w)')
+        img_target = rearrange(img_masked, 'b e h w -> b e (h w)')
         
         proj_feats, _ = torch_scatter.scatter_min(
             img_target,
@@ -147,7 +172,7 @@ class ProjectToGroundPlane():
         vaccant_area = (proj_feats != 0) & (proj_feats < self.height_min)
         
         # The belief image for projection
-        belief_map = torch.zeros_like(img)
+        belief_map = torch.zeros_like(proj_feats)
         belief_map[occupied_area] = self.occupied_bel
         belief_map[vaccant_area] = self.vaccant_bel
         
@@ -170,10 +195,10 @@ class Projection:
         )
 
     def forward(self, depth) -> torch.Tensor:
-        spatial_locs, height_map = self.compute_spatial_locs.forward(depth)
-        ego_local_map = self.project_to_ground_plane.forward(height_map, spatial_locs)
+        spatial_locs, height_map, valid_maps = self.compute_spatial_locs.forward(depth)
+        ego_local_map = self.project_to_ground_plane.forward(height_map, spatial_locs, valid_maps)
         return ego_local_map
-    
+
 class Registration():
     def __init__(self, egocentric_map_size, global_map_size, coordinate_min, coordinate_max, num_process, device, global_map_depth = 1):
         self.egocentric_map_size = egocentric_map_size
@@ -214,15 +239,12 @@ class Registration():
             with torch.cuda.device(0):
                 agent_view = torch.cuda.FloatTensor(bs, self.global_map_depth, self.global_map_size, self.global_map_size).fill_(0)
         else:
-            agent_view = torch.FloatTensor(bs, self.global_map_depth, self.global_map_size, self.global_map_size).to(self.device).fill_(0)
+            gent_view = torch.FloatTensor(bs, self.global_map_depth, self.global_map_size, self.global_map_size).to(self.device).fill_(0)
 
         agent_view[:, :, 
             self.global_map_size//2 - math.floor(self.egocentric_map_size/2):self.global_map_size//2 + math.ceil(self.egocentric_map_size/2), 
             self.global_map_size//2 - math.floor(self.egocentric_map_size/2):self.global_map_size//2 + math.ceil(self.egocentric_map_size/2)
         ] = egocentric_map
-        
-        agent_egocentric_view = agent_view.clone().detach()
-        global_allocentric_copy = rearrange(global_allocentric_map.clone().detach(), 'b h w -> b () h w')
 
         st_pose = torch.cat(
             [
@@ -232,30 +254,16 @@ class Registration():
             ], 
             dim=1
         ).to(self.device)
-        st_pose_inverse = torch.cat(
-            [
-                (grid_y.unsqueeze(1)-(self.global_map_size//2))/(self.global_map_size//2),
-                (grid_x.unsqueeze(1)-(self.global_map_size//2))/(self.global_map_size//2), 
-                -observations['compass']
-            ],
-            dim=1
-        ).to(self.device)
         
         # Generate warpping matrix for pytorch
         rot_mat, trans_mat = get_grid(st_pose, agent_view.size(), self.device)
-        rot_inverse_mat, trans_inverse_mat = get_grid(st_pose_inverse, global_allocentric_copy[:bs, ...].size(), self.device)
         
         # Warpping for global allocentric map
         rotated = F.grid_sample(agent_view, rot_mat)
         translated = F.grid_sample(rotated, trans_mat)
-        registered_map = global_allocentric_map[:bs, ...].clone().detach().unsqueeze(dim=1) + translated # .permute(0, 2, 3, 1)
+        registered_map = (global_allocentric_map[:bs, ...].clone().detach().unsqueeze(dim=1) + translated) # * 0.5 # .permute(0, 2, 3, 1)
         
-        # Warpping for global egocentric map
-        egocentric_rotated = F.grid_sample(global_allocentric_copy[:bs, ...], rot_inverse_mat)
-        egocentric_translated = F.grid_sample(egocentric_rotated, trans_inverse_mat)
-        egocentric_global_map = agent_egocentric_view + egocentric_translated # .permute(0, 2, 3, 1)
-        
-        return registered_map.squeeze(dim=1), egocentric_global_map.squeeze(dim=1)
+        return registered_map.squeeze(dim=1)
     
 class OccupancyMap():
     
@@ -392,10 +400,7 @@ class OccupancyMapRollout():
         # Project to 2D map & Generate 2D local egocentric map
         projection = self.occupancy_projection.forward(depth * 10.)
         # Update global allocentric map & Get global egocentric map
-        (
-            self.global_allocentric_occupancy_map[self.step + 1], 
-            self.global_egocentric_occupancy_map[self.step + 1]
-        ) = self.registration.forward(observations, self.global_allocentric_occupancy_map[self.step], projection)
+        self.global_allocentric_occupancy_map[self.step + 1] = self.registration.forward(observations, self.global_allocentric_occupancy_map[self.step], projection)
         self.step += 1
     
 class TopDownOccupancyMap():

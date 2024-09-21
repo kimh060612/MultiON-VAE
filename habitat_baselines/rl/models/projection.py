@@ -86,7 +86,7 @@ class ProjectToGroundPlane():
         outh, outw = (self.egocentric_map_size, self.egocentric_map_size)
         bs, f, HbyK, WbyK = conv.shape
         eps=-1e16
-        K = 256 / 28     # Hardcoded value of K
+        K = 256 / 32 # K = 256 / 28     # Hardcoded value of K
         # K = 1
 
         # Sub-sample spatial_locs, valid_inputs according to img_feats resolution.

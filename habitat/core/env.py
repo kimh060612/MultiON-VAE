@@ -291,6 +291,9 @@ class Env:
             patch = patch[currPix[0]-40:currPix[0]+40, currPix[1]-40:currPix[1]+40,:]
             patch = ndimage.interpolation.rotate(patch, -(observations["heading"][0] * 180/np.pi) + 90, order=0, reshape=False)
             observations["semMap"] = patch[40-25:40+25, 40-25:40+25, :]
+        if self._config.TRAINER_NAME in ["traj-multinav"]:
+            
+            pass
         return observations
 
     def _update_step_stats(self) -> None:
@@ -347,6 +350,9 @@ class Env:
             patch = patch[currPix[0]-40:currPix[0]+40, currPix[1]-40:currPix[1]+40,:]
             patch = ndimage.interpolation.rotate(patch, -(observations["heading"][0] * 180/np.pi) + 90, order=0, reshape=False)
             observations["semMap"] = patch[40-25:40+25, 40-25:40+25, :]
+        if self._config.TRAINER_NAME in ["traj-multinav"]:
+            
+            pass
 
         ##Terminates episode if wrong found is called
         if self.task.is_found_called == True and \

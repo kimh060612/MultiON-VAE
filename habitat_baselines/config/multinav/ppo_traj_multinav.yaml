@@ -35,6 +35,7 @@ RL:
     eps: 1e-5
     max_grad_norm: 0.2
     num_steps: 128
+    num_mini_steps: 32
     use_gae: True
     gamma: 0.99
     tau: 0.95
@@ -43,12 +44,11 @@ RL:
     reward_window_size: 50
     use_normalized_advantage: False
     hidden_size: 768
+    map_reward_coeff: 0.01
   MAPS:
-    egocentric_map_size: 13
-    global_egocentric_map_size: 256
-    global_map_size: 275
-    global_map_depth: 32
-    coordinate_min: -110.0
-    coordinate_max:  110.0
-    vaccant_belief: -100
-    occupied_belief: 100
+    egocentric_map_size: 20
+    global_map_size: 240
+    global_map_feat_dim: 32
+    coordinate_min: -60.0
+    coordinate_max:  60.0
+    global_crop_size: 84

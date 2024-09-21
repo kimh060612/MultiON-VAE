@@ -4,8 +4,18 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from habitat_baselines.rl.ppo.policy import Net, BaselinePolicyNonOracle, PolicyNonOracle, BaselinePolicyOracle, PolicyOracle, PolicyExploration, BaselinePolicyExploration, BaselinePolicyExpAttention
-from habitat_baselines.rl.ppo.ppo import PPONonOracle, PPOOracle, PPOExploration, PPOExpAttention
+from habitat_baselines.rl.ppo.policy import (
+    Net, 
+    BaselinePolicyNonOracle, 
+    PolicyNonOracle, 
+    BaselinePolicyOracle, 
+    PolicyOracle, 
+    PolicyExploration, 
+    BaselinePolicyExploration, 
+    BaselinePolicyExpAttention,
+    BaselinePolicyTrajUncertain
+)
+from habitat_baselines.rl.ppo.ppo import PPONonOracle, PPOOracle, PPOExploration, PPOExpAttention, PPOTrajUncertain
 
 __all__ = [
     "PPONonOracle", 
@@ -20,5 +30,7 @@ __all__ = [
     "BaselinePolicyExploration",
     "PolicyExploration",
     "PPOExpAttention",
-    "BaselinePolicyExpAttention"
+    "BaselinePolicyExpAttention",
+    "BaselinePolicyTrajUncertain",
+    "PPOTrajUncertain"
 ]

@@ -29,7 +29,7 @@ class GTEgoMap(Sensor):
         self._sim = sim
 
         super().__init__(config=config)
-
+        
         # Map statistics
         self.map_size = self.config.MAP_SIZE
         self.map_scale = self.config.MAP_SCALE
@@ -39,7 +39,7 @@ class GTEgoMap(Sensor):
             self.max_forward_range = self.map_size * self.map_scale
 
         # Agent height for pointcloud tranforms
-        self.camera_height = self._sim.habitat_config.DEPTH_SENSOR.POSITION[1]
+        self.camera_height = self._sim.config.DEPTH_SENSOR.POSITION[1]
 
         # Compute intrinsic matrix
         depth_H = self._sim.habitat_config.DEPTH_SENSOR.HEIGHT

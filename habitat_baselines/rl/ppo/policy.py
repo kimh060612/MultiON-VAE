@@ -15,7 +15,7 @@ from habitat_baselines.rl.models.rnn_state_encoder import RNNStateEncoder, RNNAt
 from habitat_baselines.rl.models.simple_cnn import RGBCNNNonOracle, RGBCNNOracle, MapCNN
 from habitat_baselines.rl.models.projection import Projection
 from habitat_baselines.rl.models.geometry import OccupancyMap, TopDownOccupancyMap
-from habitat_baselines.rl.models.perception import PerceptionCNN
+from habitat_baselines.rl.models.perception import PerceptionCNN, TrajMapCNN
 from encoding_layer.model import Encoder
 # from skimage.measure import label
 
@@ -258,6 +258,67 @@ class PolicyExpAttention(nn.Module):
         return value, action_log_probs, distribution_entropy, rnn_hidden_states
 
 
+class PolicyTrajUncertain(nn.Module):
+    def __init__(self, net, dim_actions):
+        super().__init__()
+        self.net = net
+        self.dim_actions = dim_actions
+
+        self.action_distribution = CategoricalNet(
+            self.net.output_size, self.dim_actions
+        )
+        self.critic = CriticHead(self.net.output_size)
+
+    def forward(self, *x):
+        raise NotImplementedError
+
+    def act(
+        self,
+        observations,
+        rnn_hidden_states,
+        global_map,
+        trajectory_map,
+        prev_actions,
+        masks,
+        deterministic=False,
+    ):
+        features, rnn_hidden_states, global_map, trajectory_map = self.net(
+            observations, rnn_hidden_states, global_map, trajectory_map, prev_actions, masks
+        )
+
+        distribution = self.action_distribution(features)
+        value = self.critic(features)
+
+        if deterministic:
+            action = distribution.mode()
+        else:
+            action = distribution.sample()
+
+        action_log_probs = distribution.log_probs(action)
+
+        return value, action, action_log_probs, rnn_hidden_states, global_map, trajectory_map
+
+    def get_value(self, observations, rnn_hidden_states, global_map, trajectory_map, prev_actions, masks):
+        features, _, _, _ = self.net(
+            observations, rnn_hidden_states, global_map, trajectory_map, prev_actions, masks
+        )
+        return self.critic(features)
+
+    def evaluate_actions(
+        self, observations, rnn_hidden_states, global_map, trajectory_map, prev_actions, masks, action
+    ):
+        features, rnn_hidden_states, global_map, trajectory_map = self.net(
+            observations, rnn_hidden_states, global_map, trajectory_map, prev_actions, masks, ev=1
+        )
+        distribution = self.action_distribution(features)
+        value = self.critic(features)
+
+        action_log_probs = distribution.log_probs(action)
+        distribution_entropy = distribution.entropy().mean()
+
+        return value, action_log_probs, distribution_entropy, rnn_hidden_states
+
+
 class CriticHead(nn.Module):
     def __init__(self, input_size):
         super().__init__()
@@ -408,6 +469,47 @@ class BaselinePolicyExpAttention(PolicyExpAttention):
             ),
             action_space.n,
         )
+        
+        
+class BaselinePolicyTrajUncertain(PolicyTrajUncertain):
+    def __init__(
+        self,
+        batch_size,
+        observation_space,
+        action_space,
+        goal_sensor_uuid,
+        device,
+        object_category_embedding_size,
+        previous_action_embedding_size,
+        use_previous_action,
+        egocentric_map_size,
+        global_map_size,
+        global_map_depth,
+        global_crop_size,
+        coordinate_min,
+        coordinate_max,
+        hidden_size=512,
+    ):
+        super().__init__(
+            TrajUncertainNetwork(
+                batch_size,
+                observation_space=observation_space,
+                hidden_size=hidden_size,
+                goal_sensor_uuid=goal_sensor_uuid,
+                device=device,
+                object_category_embedding_size=object_category_embedding_size,
+                previous_action_embedding_size=previous_action_embedding_size,
+                use_previous_action=use_previous_action,
+                egocentric_map_size=egocentric_map_size,
+                global_map_size=global_map_size,
+                global_crop_size=global_crop_size,
+                global_map_depth=global_map_depth,
+                coordinate_min=coordinate_min,
+                coordinate_max=coordinate_max,
+            ),
+            action_space.n,
+        )
+        
 
 class Net(nn.Module, metaclass=abc.ABCMeta):
     @abc.abstractmethod
@@ -520,7 +622,7 @@ class BaselineNetNonOracle(Net):
             if bs != 18:
                 self.full_global_map[bs:, :, :, :] = self.full_global_map[bs:, :, :, :] * 0
             if torch.cuda.is_available():
-                with torch.cuda.device(0):
+                with torch.cuda.device(1):
                     agent_view = torch.cuda.FloatTensor(bs, self.global_map_depth, self.global_map_size, self.global_map_size).fill_(0)
             else:
                 agent_view = torch.FloatTensor(bs, self.global_map_depth, self.global_map_size, self.global_map_size).to(self.device).fill_(0)
@@ -564,7 +666,7 @@ class BaselineNetNonOracle(Net):
             return x, rnn_hidden_states, final_retrieval.permute(0, 2, 3, 1)
         else: 
             global_map = global_map * masks.unsqueeze(1).unsqueeze(1)  ##verify
-            with torch.cuda.device(0):
+            with torch.cuda.device(1):
                 agent_view = torch.cuda.FloatTensor(bs, self.global_map_depth, 51, 51).fill_(0)
             agent_view[:, :, 
                 51//2 - math.floor(self.egocentric_map_size/2):51//2 + math.ceil(self.egocentric_map_size/2), 
@@ -844,7 +946,7 @@ class ExpAttentionNetwork(Net):
         self.flatten = Flatten()
 
         if self.use_previous_action:
-            self.state_encoder = RNNAttentionStateEncoder( # RNNStateEncoder(
+            self.state_encoder = RNNStateEncoder( # RNNStateEncoder(
                 self._hidden_size + 256 + object_category_embedding_size + 
                 previous_action_embedding_size, self._hidden_size,
             )
@@ -967,3 +1069,187 @@ class ExpAttentionNetwork(Net):
             x = torch.cat((perception_embed, global_map_embed, goal_embed, action_embedding), dim = 1)
             x, rnn_hidden_states = self.state_encoder(x, rnn_hidden_states, masks)
             return x, rnn_hidden_states, final_retrieval.permute(0, 2, 3, 1), occ_reward
+
+class TrajUncertainNetwork(Net):
+    r"""Network which passes the input image through CNN and concatenates
+    goal vector with CNN's output and passes that through RNN.
+    """
+
+    def __init__(self, batch_size, observation_space, hidden_size, goal_sensor_uuid, device, 
+        object_category_embedding_size, previous_action_embedding_size, use_previous_action,
+        egocentric_map_size, global_map_size, global_crop_size, global_map_depth, 
+        coordinate_min, coordinate_max
+    ):
+        super().__init__()
+        self.goal_sensor_uuid = goal_sensor_uuid
+        self._n_input_goal = observation_space.spaces[
+            self.goal_sensor_uuid
+        ].shape[0]
+        self._hidden_size = hidden_size
+        self.device = device
+        self.use_previous_action = use_previous_action
+        self.egocentric_map_size = egocentric_map_size
+        self.global_map_size = global_map_size
+        self.global_map_depth = global_map_depth
+        self.global_crop_size = global_crop_size
+        self.map_emb_dim = 128
+
+        self.visual_encoder = PerceptionCNN(observation_space, out_channel=self.global_map_depth)
+        self.map_encoder = TrajMapCNN(global_crop_size, self.map_emb_dim, "non-oracle")        
+
+        self.projection = Projection(egocentric_map_size, global_map_size, 
+            device, coordinate_min, coordinate_max
+        )
+
+        self.to_grid = to_grid(global_map_size, coordinate_min, coordinate_max)
+        self.rotate_tensor = RotateTensor(device)
+
+        self.image_features_linear = nn.Linear(self.global_map_depth * 32 * 32, 512)
+
+        self.flatten = Flatten()
+
+        if self.use_previous_action:
+            self.state_encoder = RNNStateEncoder(
+                self._hidden_size + self.map_emb_dim + object_category_embedding_size + 
+                previous_action_embedding_size, self._hidden_size,
+            )
+        else:
+            self.state_encoder = RNNStateEncoder(
+                (0 if self.is_blind else self._hidden_size) + object_category_embedding_size,
+                self._hidden_size,   #Replace 2 by number of target categories later
+            )
+        self.goal_embedding = nn.Embedding(8, object_category_embedding_size)
+        self.action_embedding = nn.Embedding(4, previous_action_embedding_size)
+        self.full_global_map = torch.zeros(
+            batch_size,
+            global_map_size,
+            global_map_size,
+            global_map_depth,
+            device=self.device,
+        )
+
+        self.train()
+
+    @property
+    def output_size(self):
+        return self._hidden_size
+
+    @property
+    def is_blind(self):
+        return self.visual_encoder.is_blind
+
+    @property
+    def num_recurrent_layers(self):
+        return self.state_encoder.num_recurrent_layers
+
+    def get_target_encoding(self, observations):
+        return observations[self.goal_sensor_uuid]
+
+    def forward(self, observations, rnn_hidden_states, global_map, trajectory_map, prev_actions, masks, ev=0):
+        bs = global_map.shape[0]
+        target_encoding = self.get_target_encoding(observations)
+        goal_embed = self.goal_embedding((target_encoding).type(torch.LongTensor).to(self.device)).squeeze(1)
+        
+        if not self.is_blind:
+            perception_embed = self.visual_encoder(observations)
+        # interpolated_perception_embed = F.interpolate(perception_embed, scale_factor=256./28., mode='bilinear')
+        projection = self.projection.forward(perception_embed, observations['depth'] * 10, -(observations["compass"]))
+        perception_embed = self.image_features_linear(self.flatten(perception_embed))
+        grid_x, grid_y = self.to_grid.get_grid_coords(observations['gps'])
+        grid_x_coord, grid_y_coord = grid_x.type(torch.long).unsqueeze(0), grid_y.type(torch.long).unsqueeze(0)
+        grid_coord = torch.cat([
+            grid_x_coord,
+            grid_y_coord,
+        ], dim=1).long()
+        traj_index = torch.arange(0, bs, 1).long()
+        trajectory_map[traj_index, grid_coord[:, 0], grid_coord[:, 1], 0] = 1.
+        trajectory_map[traj_index, grid_coord[:, 0], grid_coord[:, 1], 1:] = observations['heading']
+        
+        ##forward pass specific
+        if ev == 0:
+            self.full_global_map[:bs, :, :, :] = self.full_global_map[:bs, :, :, :] * masks.unsqueeze(1).unsqueeze(1)
+            if bs != 18:
+                self.full_global_map[bs:, :, :, :] = self.full_global_map[bs:, :, :, :] * 0
+            if torch.cuda.is_available():
+                with torch.cuda.device(self.device):
+                    agent_view = torch.cuda.FloatTensor(bs, self.global_map_depth, self.global_map_size, self.global_map_size).fill_(0)
+            else:
+                agent_view = torch.FloatTensor(bs, self.global_map_depth, self.global_map_size, self.global_map_size).to(self.device).fill_(0)
+            agent_view[:, :, 
+                self.global_map_size//2 - math.floor(self.egocentric_map_size/2):self.global_map_size//2 + math.ceil(self.egocentric_map_size/2), 
+                self.global_map_size//2 - math.floor(self.egocentric_map_size/2):self.global_map_size//2 + math.ceil(self.egocentric_map_size/2)
+            ] = projection
+            st_pose = torch.cat(
+                [
+                    -(grid_y.unsqueeze(1) - (self.global_map_size // 2)) / (self.global_map_size // 2),
+                    -(grid_x.unsqueeze(1) - (self.global_map_size // 2)) / (self.global_map_size // 2), 
+                    observations['compass']
+                ], 
+                dim=1
+            )
+            rot_mat, trans_mat = get_grid(st_pose, agent_view.size(), self.device)
+            rotated = F.grid_sample(agent_view, rot_mat)
+            translated = F.grid_sample(rotated, trans_mat)
+            self.full_global_map[:bs, :, :, :] = torch.max(self.full_global_map[:bs, :, :, :], translated.permute(0, 2, 3, 1))
+            st_pose_retrieval = torch.cat(
+                [
+                    (grid_y.unsqueeze(1) - (self.global_map_size // 2)) / (self.global_map_size // 2),
+                    (grid_x.unsqueeze(1) - (self.global_map_size // 2)) / (self.global_map_size // 2),
+                    torch.zeros_like(observations['compass'])
+                ],
+                dim=1
+            )
+            _, trans_mat_retrieval = get_grid(st_pose_retrieval, agent_view.size(), self.device)
+            translated_retrieval = F.grid_sample(self.full_global_map[:bs, :, :, :].permute(0, 3, 1, 2), trans_mat_retrieval)
+            translated_retrieval = translated_retrieval[:, :,
+                self.global_map_size//2 - math.floor(self.global_crop_size/2) : self.global_map_size//2 + math.ceil(self.global_crop_size/2), 
+                self.global_map_size//2 - math.floor(self.global_crop_size/2) : self.global_map_size//2 + math.ceil(self.global_crop_size/2)
+            ]
+            traj_cropped = trajectory_map[:, 
+                self.global_map_size//2 - math.floor(self.global_crop_size/2) : self.global_map_size//2 + math.ceil(self.global_crop_size/2), 
+                self.global_map_size//2 - math.floor(self.global_crop_size/2) : self.global_map_size//2 + math.ceil(self.global_crop_size/2), 
+                :
+            ]
+            final_retrieval = self.rotate_tensor.forward(translated_retrieval, observations["compass"])
+            
+            final_map_repr = torch.cat([
+                final_retrieval.permute(0, 2, 3, 1),
+                traj_cropped
+            ], dim=-1)
+            global_map_embed = self.map_encoder(final_map_repr)
+            
+            if self.use_previous_action:
+                action_embedding = self.action_embedding(prev_actions).squeeze(1)
+
+            x = torch.cat((perception_embed, global_map_embed, goal_embed, action_embedding), dim = 1)
+            x, rnn_hidden_states = self.state_encoder(x, rnn_hidden_states, masks)
+            return x, rnn_hidden_states, final_retrieval.permute(0, 2, 3, 1), trajectory_map
+        else: 
+            global_map = global_map * masks.unsqueeze(1).unsqueeze(1)  ##verify
+            trajectory_map = trajectory_map * masks.unsqueeze(1).unsqueeze(1)
+            with torch.cuda.device(self.device):
+                agent_view = torch.cuda.FloatTensor(bs, self.global_map_depth, self.global_crop_size, self.global_crop_size).fill_(0)
+            agent_view[:, :, 
+                self.global_crop_size//2 - math.floor(self.egocentric_map_size/2) : self.global_crop_size//2 + math.ceil(self.egocentric_map_size/2), 
+                self.global_crop_size//2 - math.floor(self.egocentric_map_size/2) : self.global_crop_size//2 + math.ceil(self.egocentric_map_size/2)
+            ] = projection
+            traj_cropped = trajectory_map[:, 
+                self.global_map_size//2 - math.floor(self.global_crop_size/2) : self.global_map_size//2 + math.ceil(self.global_crop_size/2), 
+                self.global_map_size//2 - math.floor(self.global_crop_size/2) : self.global_map_size//2 + math.ceil(self.global_crop_size/2), 
+                :
+            ]
+            
+            final_retrieval = torch.max(global_map, agent_view.permute(0, 2, 3, 1))
+            final_map_repr = torch.cat([
+                final_retrieval,
+                traj_cropped
+            ], dim=-1)
+        
+            global_map_embed = self.map_encoder(final_map_repr)
+
+            if self.use_previous_action:
+                action_embedding = self.action_embedding(prev_actions).squeeze(1)
+
+            x = torch.cat((perception_embed, global_map_embed, goal_embed, action_embedding), dim = 1)
+            x, rnn_hidden_states = self.state_encoder(x, rnn_hidden_states, masks)
+            return x, rnn_hidden_states, final_retrieval, trajectory_map
